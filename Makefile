@@ -5,8 +5,7 @@ test:
 
 .PHONY: run
 run:
-	export FLASK_APP=gomoku_app.py
-	flask run
+	./gomoku_app.py
 
 .PHONY: open
 open:

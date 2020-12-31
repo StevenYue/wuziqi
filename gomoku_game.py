@@ -1,12 +1,13 @@
 #!/usr/bin/python3.8
 
-from threading import Lock
+from threading import Lock, Thread
 import json
 import logging
 import time
 
 PLAYER_ID_0 = 0
 PLAYER_ID_1 = 1
+FRAME_RATE_SEC = 1.0
 
 class Game:
     class STATE:
@@ -17,21 +18,26 @@ class Game:
     class Player:
         def __init__(self, name, game_size):
             self.name = name
-            self.moves = [[0] * game_size] * game_size 
             self.win_cnt = 0
-            self.ready = False
+            self.lose_cnt = 0
+            self.ready = True
+            self.game_size = game_size
+            self.reset()
+
+        def reset(self):
+            self.moves = [[0 for i in range(self.game_size)] for j in range(self.game_size)] 
 
     def __init__(self, size=15):
         assert size >= 5
         self.size = size
-        self.players = {
-            PLAYER_ID_0: None,
-            PLAYER_ID_1: None,
-        }
-        self.game_state = None
+        self.players = {}
+        self.game_state = self.STATE.WAITING
         self.game_cnt = 0
-        self.whos_turn = 0 
+        self.whos_turn = 0
+        self.p0 = None
+        self.p1 = None
         self.winner = None
+        self.updater = None
         self.mutex = Lock()
         self.bd = int(time.time())
 
@@ -40,15 +46,22 @@ class Game:
 
     def _get_obj(self):
         obj = {
-            "game_index" : self.game_cnt,
+            "game_cnt" : self.game_cnt,
             "whos_turn" : self.whos_turn,
             "winner" : self.winner,
             "state" : self.game_state,
             "bd" : self.bd,
-            "P0" : self.players[PLAYER_ID_0].__dict__ if self.players[PLAYER_ID_0] else None,
-            "P1" : self.players[PLAYER_ID_1].__dict__ if self.players[PLAYER_ID_1] else None,
+            "P0" : self.p0.__dict__ if self.p0 else None,
+            "P1" : self.p1.__dict__ if self.p1 else None,
         }
         return obj
+
+    def get_obj(self):
+        with self.mutex:
+            return self._get_obj()
+
+    def valid_player_id(self, player_id):
+        return player_id in [PLAYER_ID_0, PLAYER_ID_1]
 
     # given a list of hashes and see if it won
     # true if the move set won, false otherwise
@@ -84,38 +97,71 @@ class Game:
                     return True
         return False
 
-    # TODO:
     # start a new game, reset state & counter ...
     def start_new_game(self):
-        pass 
+        self.game_cnt += 1
+        self.game_state = self.STATE.START 
+        self.winner = None
+        self.whos_turn = self.who_start_first()
+        self.p0.reset()
+        self.p1.reset()
 
-    # TODO
-    def finish_up_a_game(player_id):
-        pass
+    def finish_up_a_game(self, player_id):
+        self.game_state = self.STATE.FINISH 
+        self.winner = player_id
+        if self.winner == PLAYER_ID_0:
+            self.p0.win_cnt += 1
+            self.p1.lose_cnt += 1
+        else:
+            self.p0.lose_cnt += 1
+            self.p1.win_cnt += 1
+        self.p0.ready = False
+        self.p1.ready = False
 
-    # TODO:
     # Add a player to the game,
-    # return player Id on success, None on failer
+    # return player Id on success, None if can't add 
     def add_player(self, name):
-        return None
-    
-    # TODO:
+        player_id = None
+        with self.mutex:
+            if None != self.p0 and None != self.p1:
+                pass
+            else:
+                new_player = self.players[name] if name in self.players else self.Player(name, self.size)
+                if None == self.p0:
+                    self.p0 = new_player
+                    player_id = PLAYER_ID_0
+                else: # None == self.p1
+                    self.p1 = new_player
+                    player_id = PLAYER_ID_1
+            if self.p0 and self.p1:
+                self.start_new_game()
+        return player_id
+
     # mark player_id as ready
     def player_ready(self, player_id):
-        pass
+        with self.mutex:
+            player = self.p0 if player_id == PLAYER_ID_0 else self.p1
+            if player.ready:
+                return
+            player.ready = True
+            self.game_state = self.STATE.WAITING
+            if self.p0.ready and self.p1.ready:
+                self.start_new_game()
 
     def switch_turn(self):
-        self.whos_turn = PLAYER_ID_0 if self.whos_turn == PLAYERD_ID_1 else PLAYERD_ID_1
+        self.whos_turn = PLAYER_ID_0 if self.whos_turn == PLAYER_ID_1 else PLAYER_ID_1
 
     # add a piece to the board, 
     # return 0 on success, -1 on failure
     def add_move(self, player_id, x, y):
+        logging.info("add_move:", player_id, x, y)
         with self.mutex:
-            player = self.players[player_id]
-            if self.whos_turn == player_id and _is_board(x, y) and 0 == player.moves[x][y]:
+            player = self.p0 if player_id == PLAYER_ID_0 else self.p1
+            if self.whos_turn == player_id and self._in_board(x, y) and 0 == player.moves[x][y]:
                 player.moves[x][y] = 1
                 if self._is_moves_won(player.moves):
-                    finish_up_a_game(player_id) 
+                    print(player.moves)
+                    self.finish_up_a_game(player_id) 
                 self.switch_turn()
                 return 0
             else:
@@ -124,11 +170,16 @@ class Game:
 
     # determin who should start first
     def who_start_first(self):
-        return PLAYER_ID_0 if self.game_cnt % 2 == 0 else PLAYER_ID_1
+        return PLAYER_ID_0 if self.game_cnt % 2 == 1 else PLAYER_ID_1
 
-    # serialize for sending over wire
-    def serialize(self):
+    def callback(self, func, *args):
+        while True:
+            func(*args)
+            time.sleep(FRAME_RATE_SEC)
+ 
+    def start_refresher(self, func, *args):
         with self.mutex:
-            obj = self._get_obj()
-        return json.dumps(obj) 
+            if not self.updater: 
+                self.updater = Thread(target=self.callback, args=(func,*args,), daemon=True)
+                self.updater.start()
 

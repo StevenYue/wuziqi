@@ -1,28 +1,289 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
-<title>Gomoku</title>
+<title>gomoku</title>
 <meta name="viewport" content="width = device-width, initial-scale = 1">
-<link rel="stylesheet" type="text/css" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+<link rel="stylesheet" type="text/css" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
 <script src="http://ajax.googleapis.com/ajax/libs/angularjs/1.4.8/angular.min.js"></script>
 <script src="http://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script>
-
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/3.0.4/socket.io.js" integrity="sha512-aMGMvNYu8Ue4G+fHa359jcPb1u+ytAF+P2SCb+PxrjCdO3n3ZTxJ30zuH39rimUggmTwmh2u7wvQsDTHESnmfQ==" crossorigin="anonymous"></script>
 <style>
+
+.tile {
+    background : rgb(242,176,109);
+    height: 50px;
+    width: 50px;
+    border: 0px; 
+}
+
+.cross {
+    background : black;
+    position : relative;
+    content : ""; 
+    border: 0px; 
+    left : 25px;
+    top : 0px;
+    height : 50px;
+    width: 1px;
+}
+
+.cross:before {
+    background : black;
+    position : absolute;
+    content : ""; 
+    border: 0px; 
+    left : -25px;
+    top : 25px;
+    height : 1px;
+    width: 50px;
+}
+.tile:hover {
+    background : grey;
+    cursor: pointer;
+}
+
+.circle-white {
+    width: 40px;
+    height: 40px;
+    background: white;
+    border-radius: 50%;
+    position : absolute;
+    left : -20px;
+    top: 5px;
+}
+
+.circle-black {
+    width: 40px;
+    height: 40px;
+    background: black;
+    border-radius: 50%;
+    position : absolute;
+    left : -20px;
+    top: 5px;
+}
+
+table, td {
+    border-spacing: 0px;
+    border: 0px;
+    padding: 0px;
+}
 
 </style>
 
 <script type="text/javascript">
-$(document).ready(function(){
 
+const PIECE_COLOR = {
+    WHITE : 0,
+    BLACK : 1,
+};
+const PLAYER_ID_0 = 0;
+const PLAYER_ID_1 = 1;
+
+const GAME_STATE = {
+    WAITING : 0,
+    START : 1,
+    FINISH : 2,
+};
+
+const ERROR_CODE = {
+    INVALID_USER : -1,
+    GAME_FULL : -2,
+};
+
+let g_player_id = null;
+let g_player_color = null;
+let g_opp_color = null;
+let g_state = null;
+let g_socketio = null;
+let g_your_turn = false;
+let g_game_started = false;
+
+$(document).ready(function() {
+    render_board(15);
+    $("#ready").on("click", readyClickedHandler);
+    g_state = GAME_STATE.YOUR_TURN;
 });
+
+window.onbeforeunload = function () {
+    g_socketio.emit("dummy", {"foo":"bar"});
+}
+
+function tile_clicked_handler(args) {
+    if ( g_your_turn )
+    {
+        let id = $(this).attr('id');
+        let clicked = $(this).attr('clicked');
+        if ( !clicked ) {
+            place_piece(id, g_player_color);
+            g_your_turn = false;
+            let toks = id.split("-");
+            let x = Number(toks[0]);
+            let y = Number(toks[1]);
+            g_socketio.emit("put_piece", {"player_id": g_player_id, "x": x, "y": y});
+        }
+    }
+}
+
+function render_moves(moves, color) {
+    let game_size = 15;
+    for ( let i = 0; i < game_size; ++i ) {
+        for ( let j = 0; j < game_size; ++j ) {
+            if ( moves[i][j] ) {
+                let id = i + "-" + j;
+                place_piece(id, color);
+            }
+        }
+    }
+}
+
+function game_data_handler(game_data) {
+    console.log("game_data:", game_data, g_player_id);
+    let state = game_data["state"];  
+    let whos_turn = game_data["whos_turn"];  
+    let winner_id = game_data["winner"];  
+    let game_cnt = game_data["game_cnt"];
+    let my_game = g_player_id === PLAYER_ID_0 ? game_data["P0"]: game_data["P1"];
+    let opp_game = g_player_id === PLAYER_ID_0 ? game_data["P1"]: game_data["P0"];
+    g_your_turn = false;
+    function formatWinLose(game) {
+        return "Win:" + game.win_cnt + ", Lose:" + game.lose_cnt;
+    }
+    if ( opp_game ) {
+        render_moves(opp_game.moves, g_opp_color)
+    }
+    if ( GAME_STATE.FINISH === state ) {
+        g_game_started = false;
+        $("#p1_win_cnt").text(formatWinLose(my_game));
+        $("#p2_win_cnt").text(formatWinLose(opp_game));
+        $("#game_info").html("<strong>" + game_data["P"+winner_id].name
+                + " WON, congrats!!!!<br>Click Ready for a new game</strong>");
+    } 
+    else  if ( GAME_STATE.WAITING === state ) {
+        //TODO: improve waiting info
+        $("#game_info").text("Waiting ........");            
+    }
+    else  if ( GAME_STATE.START === state ) {
+        if ( !g_game_started )
+        {
+            render_board(15);
+            $("#game_cnt").text(game_cnt);
+            $("#p1_name").html(my_game.name + ": <span id='p1_win_cnt'></span>");
+            $("#p2_name").html(opp_game.name + ": <span id='p2_win_cnt'></span>");
+            $("#p1_win_cnt").text(formatWinLose(my_game));
+            $("#p2_win_cnt").text(formatWinLose(opp_game));
+            $("#game_info").text("game started");
+        }
+        g_game_started = true;
+        if ( whos_turn === g_player_id ) {
+            g_your_turn = true;
+            $("#game_info").text("Your turn!");            
+        }
+        else {
+            g_your_turn = false;
+            $("#game_info").text(opp_game.name + "'s turn!");            
+        }
+    }
+    else {
+        console.log("ERROR, unknown game state:", state);
+    }
+}
+
+function readyClickedHandler() {
+    let name = $("#name").val();
+    console.log("Player ready:", name)
+    if ( "" === name && null === g_player_id ) { 
+        alert("WHO ARE U???")
+        return;
+    }
+    g_socketio = io();
+    g_socketio.emit("ready", {"player_id": g_player_id, "player_name": name});
+    g_socketio.on("ready", function(player_id) {
+        if ( null === g_player_id )
+        {
+            console.log("ready: player_id:", player_id);
+            if ( player_id < 0 ) {
+                window.location.href = '/monster';
+            }
+            else {
+                g_player_id = player_id;
+                g_player_color = player_id === PLAYER_ID_0 ? PIECE_COLOR.WHITE : PIECE_COLOR.BLACK;
+                g_opp_color = player_id === PLAYER_ID_1 ? PIECE_COLOR.WHITE : PIECE_COLOR.BLACK;
+                g_socketio.on("game_data", game_data_handler);
+            }
+        }
+    });
+}
+
+function place_piece(id, color) {
+    if ( PIECE_COLOR.BLACK === color ) {
+        $("#"+id).html("<div class='cross'><div class='circle-black'></div></div>");
+    }
+    else {
+        $("#"+id).html("<div class='cross'><div class='circle-white'></div></div>");
+    }
+    $("#"+id).attr("clicked", 1);
+}
+
+function  render_board(size) {
+    let board_content = "";
+    for ( let i = 0; i < size; ++i ) {
+        board_content += "<tr>";
+        for ( let j = 0; j < size; ++j ) {
+            let tile_id = i + "-" + j;
+            board_content += "<td><div class='tile' id='" 
+                + tile_id + "'><div class='cross'></div></div></td>";
+        }
+        board_content += "</tr>";
+    }
+    $("#board").html(board_content);
+    $(".tile").on("click", tile_clicked_handler);
+} 
 
 </script>
 </head>
 
 <body>
-<h1>Test, Deletion needed</h1>
+<div class="container-fluid" id="main">
+
+<nav class="navbar navbar-light" style="background-color: #e3f2fd;">
+    <h1 class="navbar-brand">Gomoku - Wuziqi</h1>
+</nav>
+
+<div class="row">
+    <div class="col"> 
+        <table>
+            <tbody id="board">
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="col"> 
+        <div class="input-group">
+            <div class="input-group-prepend">
+                <button class="btn btn-success" type="button" id="ready">Ready</button>
+            </div>
+            <input type="text" class="form-control" placeholder="Your Name" aria-label="" aria-describedby="basic-addon1" id="name">
+        </div>
+
+
+        <div class="alert alert-info" role="alert">
+            <h2 class="alert-heading">Player records:</h2>
+            <h5>Game No. <span id="game_cnt">0</span></h5>
+            <h5 id="p1_name">xxx: <span id="p1_win_cnt">0</span></h5>
+            <h5 id="p2_name">xxx: <span id="p2_win_cnt">0</span></h5>
+        </div>
+      
+        <div class="alert alert-danger" role="alert">
+            <h4 class="alert-heading">Game Info</h4>
+            <p id="game_info"></p>
+        </div>
+    </div>
+</div>
+
+
+</div>
+
 </body>
 </html>
-<!-- Steeng create at: Mon 28 Dec 2020 12:52:36 PM EST -->
+<!-- steeng create at: mon 28 dec 2020 12:52:36 pm est -->
