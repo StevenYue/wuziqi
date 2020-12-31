@@ -84,6 +84,7 @@ const GAME_STATE = {
     WAITING : 0,
     START : 1,
     FINISH : 2,
+    STALE : 3,
 };
 
 const ERROR_CODE = {
@@ -102,11 +103,40 @@ let g_game_started = false;
 $(document).ready(function() {
     render_board(15);
     $("#ready").on("click", readyClickedHandler);
+    $("#surrender").on("click", surrenderClickedHandler);
+    $("#leave").on("click", leaveClickedHandler);
     g_state = GAME_STATE.YOUR_TURN;
 });
 
-window.onbeforeunload = function () {
-    g_socketio.emit("dummy", {"foo":"bar"});
+function leave() {
+    if ( g_socketio ) {
+        g_socketio.emit("leave", {"player_id":g_player_id});
+    }
+}
+
+window.onbeforeunload = function() {
+    if ( null !== g_player_id ) {
+        leave();
+    }
+};
+
+function surrenderClickedHandler() {
+    if ( g_your_turn ) {
+        let answer = window.confirm("Sure want to surrender?");
+        if ( answer ) {
+            g_socketio.emit("surrender", {"player_id":g_player_id});
+            g_your_turn = false;
+        }
+    }
+}
+
+function leaveClickedHandler() {
+    if ( null !== g_player_id ) {
+        let answer = window.confirm("Sure want to leave?");
+        if (answer) {
+            leave(); 
+        }
+    }
 }
 
 function tile_clicked_handler(args) {
@@ -156,12 +186,31 @@ function game_data_handler(game_data) {
         g_game_started = false;
         $("#p1_win_cnt").text(formatWinLose(my_game));
         $("#p2_win_cnt").text(formatWinLose(opp_game));
-        $("#game_info").html("<strong>" + game_data["P"+winner_id].name
-                + " WON, congrats!!!!<br>Click Ready for a new game</strong>");
+        $("#game_info").html("<strong> You " 
+                + (winner_id === g_player_id ? "win, congrats?!" : "lose, sucker!!!!")
+                + "<br>Click Ready for a new game</strong>");
     } 
     else  if ( GAME_STATE.WAITING === state ) {
-        //TODO: improve waiting info
-        $("#game_info").text("Waiting ........");            
+        $("#game_info").text("Waiting.....");            
+        g_game_started = false;
+        if ( !my_game || !my_game.ready ) {
+            $("#game_info").text("Click ready.");            
+        }
+        else {
+            if ( !opp_game ) {
+                $("#game_info").text("waiting oppo to join");            
+            }
+            else {
+                if ( !opp_game.ready ) {
+                    $("#game_info").text("waiting " + opp_game.name + " to be ready");            
+                }
+            }
+        }
+    }
+    else if ( GAME_STATE.STALE === state ) {
+        g_player_id = null;
+        g_game_started = false;
+        $("#game_info").text("Click ready.");            
     }
     else  if ( GAME_STATE.START === state ) {
         if ( !g_game_started )
@@ -196,20 +245,28 @@ function readyClickedHandler() {
         alert("WHO ARE U???")
         return;
     }
-    g_socketio = io();
-    g_socketio.emit("ready", {"player_id": g_player_id, "player_name": name});
-    g_socketio.on("ready", function(player_id) {
-        if ( null === g_player_id )
-        {
-            console.log("ready: player_id:", player_id);
-            if ( player_id < 0 ) {
+    let data = {"player_id": g_player_id, "player_name": name};
+    console.log("Calling player ready:", data);
+    $.ajax({url: "ready",
+        type: "POST",
+        data : JSON.stringify(data),
+        dataType:"json",
+        contentType: 'application/json',
+        success: function(args){
+            console.log("Ready Success:", args);
+            let rc = args.rc;
+            if ( rc < 0 ) {
                 window.location.href = '/monster';
             }
             else {
-                g_player_id = player_id;
-                g_player_color = player_id === PLAYER_ID_0 ? PIECE_COLOR.WHITE : PIECE_COLOR.BLACK;
-                g_opp_color = player_id === PLAYER_ID_1 ? PIECE_COLOR.WHITE : PIECE_COLOR.BLACK;
-                g_socketio.on("game_data", game_data_handler);
+                let player_id = args.player_id;
+                if ( null !== player_id ) {
+                    g_player_id = player_id;
+                    g_player_color = player_id === PLAYER_ID_0 ? PIECE_COLOR.WHITE : PIECE_COLOR.BLACK;
+                    g_opp_color = player_id === PLAYER_ID_1 ? PIECE_COLOR.WHITE : PIECE_COLOR.BLACK;
+                    g_socketio = io();
+                    g_socketio.on("game_data", game_data_handler);
+                }
             }
         }
     });
@@ -262,16 +319,20 @@ function  render_board(size) {
         <div class="input-group">
             <div class="input-group-prepend">
                 <button class="btn btn-success" type="button" id="ready">Ready</button>
+                <button class="btn btn-danger" type="button" id="surrender">Surrender</button>
             </div>
             <input type="text" class="form-control" placeholder="Your Name" aria-label="" aria-describedby="basic-addon1" id="name">
+            <div class="input-group-append">
+                <button class="btn btn-warning" type="button" id="leave">Leave</button>
+            </div>
         </div>
 
 
         <div class="alert alert-info" role="alert">
             <h2 class="alert-heading">Player records:</h2>
             <h5>Game No. <span id="game_cnt">0</span></h5>
-            <h5 id="p1_name">xxx: <span id="p1_win_cnt">0</span></h5>
-            <h5 id="p2_name">xxx: <span id="p2_win_cnt">0</span></h5>
+            <h5 id="p1_name"></h5>
+            <h5 id="p2_name"></h5>
         </div>
       
         <div class="alert alert-danger" role="alert">

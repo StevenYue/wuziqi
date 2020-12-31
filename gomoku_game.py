@@ -8,12 +8,14 @@ import time
 PLAYER_ID_0 = 0
 PLAYER_ID_1 = 1
 FRAME_RATE_SEC = 1.0
+STALE_GAME_THRESHOLD_SEC = 600
 
 class Game:
     class STATE:
         WAITING = 0 # waiting for JOIN or READY
         START = 1
         FINISH = 2
+        STALE = 3
 
     class Player:
         def __init__(self, name, game_size):
@@ -22,9 +24,9 @@ class Game:
             self.lose_cnt = 0
             self.ready = True
             self.game_size = game_size
-            self.reset()
+            self.reset_moves()
 
-        def reset(self):
+        def reset_moves(self):
             self.moves = [[0 for i in range(self.game_size)] for j in range(self.game_size)] 
 
     def __init__(self, size=15):
@@ -39,6 +41,7 @@ class Game:
         self.winner = None
         self.updater = None
         self.mutex = Lock()
+        self.last_action_ts = None
         self.bd = int(time.time())
 
     def _in_board(self, x, y):
@@ -103,12 +106,12 @@ class Game:
         self.game_state = self.STATE.START 
         self.winner = None
         self.whos_turn = self.who_start_first()
-        self.p0.reset()
-        self.p1.reset()
+        self.p0.reset_moves()
+        self.p1.reset_moves()
 
-    def finish_up_a_game(self, player_id):
+    def finish_up_a_game(self, winner_player_id):
         self.game_state = self.STATE.FINISH 
-        self.winner = player_id
+        self.winner = winner_player_id
         if self.winner == PLAYER_ID_0:
             self.p0.win_cnt += 1
             self.p1.lose_cnt += 1
@@ -120,63 +123,109 @@ class Game:
 
     # Add a player to the game,
     # return player Id on success, None if can't add 
-    def add_player(self, name):
-        player_id = None
+    def add_player(self, name, player_id):
         with self.mutex:
-            if None != self.p0 and None != self.p1:
-                pass
-            else:
+            if None == player_id:
+                if None != self.p0 and None != self.p1:
+                    return None
                 new_player = self.players[name] if name in self.players else self.Player(name, self.size)
-                if None == self.p0:
+                self.players[name] = new_player
+                if None == self.p0:   
                     self.p0 = new_player
                     player_id = PLAYER_ID_0
-                else: # None == self.p1
+                else:
                     self.p1 = new_player
                     player_id = PLAYER_ID_1
-            if self.p0 and self.p1:
+            else:
+                player = self.p0 if player_id == PLAYER_ID_0 else self.p1
+                player.ready = True
+            self.game_state = self.STATE.WAITING
+            if self.p0 and self.p0.ready and self.p1 and self.p1.ready:
                 self.start_new_game()
+            self.update_last_action_ts()
+        logging.info("Adding player %s, as Id: %s", name, player_id)
         return player_id
 
-    # mark player_id as ready
-    def player_ready(self, player_id):
+    def player_surrender(self, player_id):
         with self.mutex:
-            player = self.p0 if player_id == PLAYER_ID_0 else self.p1
-            if player.ready:
+            if self.game_state == self.STATE.STALE:
                 return
-            player.ready = True
-            self.game_state = self.STATE.WAITING
-            if self.p0.ready and self.p1.ready:
-                self.start_new_game()
+            self.update_last_action_ts()
+            self.finish_up_a_game(PLAYER_ID_1 if player_id == PLAYER_ID_0 else PLAYER_ID_0) 
 
-    def switch_turn(self):
-        self.whos_turn = PLAYER_ID_0 if self.whos_turn == PLAYER_ID_1 else PLAYER_ID_1
+    def player_leave(self, player_id):
+        with self.mutex:
+            if self.game_state == self.STATE.STALE:
+                return
+            self.game_state = self.STATE.WAITING
+            if PLAYER_ID_0 == player_id:
+                self.p0.ready = False
+                self.p0 = None
+            elif PLAYER_ID_1 == player_id:
+                self.p1.ready = False
+                self.p1 = None
+            else:
+                logging.error("Player_leave bad player_id: %s", player_id)
 
     # add a piece to the board, 
     # return 0 on success, -1 on failure
     def add_move(self, player_id, x, y):
-        logging.info("add_move:", player_id, x, y)
+        logging.info("add_move:%s, %s, %s", player_id, x, y)
         with self.mutex:
+            if self.game_state == self.STATE.STALE:
+                return
             player = self.p0 if player_id == PLAYER_ID_0 else self.p1
             if self.whos_turn == player_id and self._in_board(x, y) and 0 == player.moves[x][y]:
                 player.moves[x][y] = 1
                 if self._is_moves_won(player.moves):
-                    print(player.moves)
                     self.finish_up_a_game(player_id) 
-                self.switch_turn()
+                else:
+                    self.switch_turn()
+                self.update_last_action_ts()
                 return 0
             else:
                 logging.error("Invalid input:%s, %s, %s, %s", player_id, x, y, self._get_obj())
                 return -1
+    
+    def switch_turn(self):
+        self.whos_turn = PLAYER_ID_0 if self.whos_turn == PLAYER_ID_1 else PLAYER_ID_1
 
     # determin who should start first
     def who_start_first(self):
         return PLAYER_ID_0 if self.game_cnt % 2 == 1 else PLAYER_ID_1
+  
+    def update_last_action_ts(self):
+        self.last_action_ts = int(time.time())
+        
+    def game_stale(self):
+        now = int(time.time())
+        with self.mutex:
+            if None != self.last_action_ts \
+                and STALE_GAME_THRESHOLD_SEC < (now - self.last_action_ts):
+                return True
+            else:
+                return False
+
+    def reset(self):
+        self.game_cnt = 0
+        self.whos_turn = 0
+        self.p0 = None
+        self.p1 = None
+        self.winner = None
+        self.updater = None
+        self.last_action_ts = None
 
     def callback(self, func, *args):
         while True:
             func(*args)
             time.sleep(FRAME_RATE_SEC)
- 
+            if (None == self.p0 and None == self.p1) or self.game_stale():
+                self.reset()
+                self.game_state = self.STATE.STALE
+                func(*args)
+                self.updater = None
+                return
+
     def start_refresher(self, func, *args):
         with self.mutex:
             if not self.updater: 
