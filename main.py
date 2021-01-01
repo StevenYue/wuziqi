@@ -47,8 +47,12 @@ def player_ready_handler():
         if None == new_id:
             return {"rc":ERROR_CODE["GAME_FULL"]}
         else:
-            game.start_refresher(send_game_data)
+            send_game_data()
             return {"rc":0, "player_id":new_id}
+
+@socketio.on("game_data")
+def put_piece_handler():
+    send_game_data()
 
 @socketio.on("put_piece")
 def put_piece_handler(args):
@@ -57,18 +61,21 @@ def put_piece_handler(args):
     x = args["x"]
     y = args["y"]
     game.add_move(player_id, x, y)
+    send_game_data()
 
 @socketio.on("leave")
 def leave_handler(args):
     logging.info("leave: %s", args)
     player_id = args["player_id"]
     game.player_leave(player_id)
+    send_game_data()
 
 @socketio.on("surrender")
 def surrender_handler(args):
     logging.info("surrender: %s", args)
     player_id = args["player_id"]
     game.player_surrender(player_id)
+    send_game_data()
 
 if __name__ == '__main__':
     logging.basicConfig(
@@ -81,5 +88,5 @@ if __name__ == '__main__':
     logger.setLevel(logging.ERROR)
 
     logging.info("Gomoku started")
-    socketio.run(app, host='0.0.0.0')
+    socketio.run(app, host='0.0.0.0', debug=True)
 

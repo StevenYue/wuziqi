@@ -5,7 +5,7 @@ test:
 
 .PHONY: run
 run:
-	./gomoku_app.py
+	./main.py
 
 .PHONY: open
 open:

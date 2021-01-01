@@ -263,8 +263,11 @@ function readyClickedHandler() {
                     g_player_id = player_id;
                     g_player_color = player_id === PLAYER_ID_0 ? PIECE_COLOR.WHITE : PIECE_COLOR.BLACK;
                     g_opp_color = player_id === PLAYER_ID_1 ? PIECE_COLOR.WHITE : PIECE_COLOR.BLACK;
-                    g_socketio = io();
-                    g_socketio.on("game_data", game_data_handler);
+                    if ( null === g_socketio ) {
+                        g_socketio = io();
+                        g_socketio.on("game_data", game_data_handler);
+                        g_socketio.emit("game_data");
+                    }
                 }
             }
         }

@@ -7,7 +7,7 @@ import time
 
 PLAYER_ID_0 = 0
 PLAYER_ID_1 = 1
-FRAME_RATE_SEC = 1.0
+FRAME_RATE_SEC = 5.0
 STALE_GAME_THRESHOLD_SEC = 600
 
 class Game:
@@ -137,8 +137,12 @@ class Game:
                     self.p1 = new_player
                     player_id = PLAYER_ID_1
             else:
-                player = self.p0 if player_id == PLAYER_ID_0 else self.p1
-                player.ready = True
+                if player_id == PLAYER_ID_0:
+                    self.p0 = self.players[name]
+                    self.p0.ready = True
+                else:
+                    self.p1 = self.players[name]
+                    self.p1.ready = True
             self.game_state = self.STATE.WAITING
             if self.p0 and self.p0.ready and self.p1 and self.p1.ready:
                 self.start_new_game()
