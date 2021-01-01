@@ -159,11 +159,13 @@ class Game:
                 return
             self.game_state = self.STATE.WAITING
             if PLAYER_ID_0 == player_id:
-                self.p0.ready = False
-                self.p0 = None
+                if self.p0:
+                    self.p0.ready = False
+                    self.p0 = None
             elif PLAYER_ID_1 == player_id:
-                self.p1.ready = False
-                self.p1 = None
+                if self.p1:
+                    self.p1.ready = False
+                    self.p1 = None
             else:
                 logging.error("Player_leave bad player_id: %s", player_id)
 

@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 game = Game()
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
-socketio = SocketIO(app, logger=False, engineio_logger=False)
+socketio = SocketIO(app, logger=False, engineio_logger=False, cors_allowed_origins="*")
 
 PLAYER_POOL = set(["luyixuan",'yuexiang','gebingqing','zhangshuqin','yuejiajia','lubin']);
 
