@@ -9,7 +9,10 @@ from logging.handlers import RotatingFileHandler
 game = Game()
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
-socketio = SocketIO(app, logger=False, engineio_logger=False, cors_allowed_origins="*")
+socketio = SocketIO(app, \
+        logger=False, \
+        engineio_logger=False, \
+        cors_allowed_origins="*")
 
 PLAYER_POOL = set(["luyixuan",'yuexiang','gebingqing','zhangshuqin','yuejiajia','lubin']);
 
@@ -32,6 +35,11 @@ def index_page():
 @app.route('/monster')
 def monster_page():
     return render_template("monster.html")
+
+@app.route('/reset')
+def game_reset_handler():
+    game = Game()
+    return render_template("index.html")
 
 @app.route("/ready", methods=['POST'])
 def player_ready_handler():
@@ -88,5 +96,5 @@ if __name__ == '__main__':
     logger.setLevel(logging.ERROR)
 
     logging.info("Gomoku started")
-    socketio.run(app, host='0.0.0.0', debug=True)
+    socketio.run(app, host='0.0.0.0', debug=False)
 

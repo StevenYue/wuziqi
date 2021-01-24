@@ -150,6 +150,7 @@ function tile_clicked_handler(args) {
             let x = Number(toks[0]);
             let y = Number(toks[1]);
             g_socketio.emit("put_piece", {"player_id": g_player_id, "x": x, "y": y});
+            $("#game_info").text("Waiting.....");            
         }
     }
 }
